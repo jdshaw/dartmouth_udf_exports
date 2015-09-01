@@ -277,7 +277,7 @@ class MARCSerializer < ASpaceExport::Serializer
 
         marc.controlfields.each do |cf|
           xml.controlfield(:tag => cf.tag) {
-            xml.cdata cf.text
+            xml.text cf.text
           }
         end
 
