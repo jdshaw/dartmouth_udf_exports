@@ -35,9 +35,20 @@ class MARCUserDefinedFieldSerialize
 
   def datafields
     extra_fields = []
-    if @record.aspace_record.user_defined && @record.aspace_record.user_defined['enum_1']
-      location_code = @record.aspace_record.user_defined['enum_1'].gsub(/^.* - /, '')
-      extra_fields = [DataField.new('950', '0', '4', [SubField.new('l', location_code)])]
+    if @record.aspace_record.user_defined
+
+      user_defined = @record.aspace_record.user_defined
+
+
+      if user_defined['enum_1']
+        location_code = user_defined['enum_1'].gsub(/^.* - /, '')
+        extra_fields << DataField.new('950', '0', '4', [SubField.new('l', location_code)])
+      end
+
+      if user_defined['text_1']
+        extra_fields << DataField.new('580', ' ', ' ', [SubField.new('a', user_defined['text_1'])])
+        extra_fields << DataField.new('830', ' ', '0', [SubField.new('p', user_defined['text_1'].sub("Forms part of: ", ""))])
+      end
     end
 
     (@record.datafields + extra_fields).sort_by(&:tag)
