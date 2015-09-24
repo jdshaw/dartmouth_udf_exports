@@ -47,8 +47,12 @@ class MARCUserDefinedFieldSerialize
 
       if user_defined['text_1']
         extra_fields << DataField.new('580', ' ', ' ', [SubField.new('a', user_defined['text_1'])])
-        extra_fields << DataField.new('830', ' ', '0', [SubField.new('p', user_defined['text_1'].sub("Forms part of: ", ""))])
       end
+
+      if user_defined['text_2']
+        extra_fields << DataField.new('830', ' ', '0', [SubField.new('p', user_defined['text_2'])])
+      end
+
     end
 
     (@record.datafields + extra_fields).sort_by(&:tag)
