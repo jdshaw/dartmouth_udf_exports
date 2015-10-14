@@ -35,22 +35,37 @@ class MARCUserDefinedFieldSerialize
 
   def datafields
     extra_fields = []
+    
+    if @record.aspace_record.ead_id
+      extra_fields << DataField.new('035', ' ', ' ', [SubField.new('a', @record.aspace_record.ead_id)])
+    end
+    
+    if @record.aspace_record.id_0
+      prefer_cite = "Rauner " + @record.aspace_record.id_0 + "; Rauner Special Collections Library, Dartmouth College, Hanover, NH."
+      extra_fields << DataField.new('524', ' ', ' ', [SubField.new('a', prefer_cite)])
+    end
+    
+    
     if @record.aspace_record.user_defined
 
       user_defined = @record.aspace_record.user_defined
 
-
-      if user_defined['enum_1']
+      if user_defined['enum_1'] && @record.aspace_record.id_0
         location_code = user_defined['enum_1'].gsub(/^.* - /, '')
-        extra_fields << DataField.new('950', '0', '4', [SubField.new('l', location_code)])
+        extra_fields << DataField.new('950', '0', '4', [SubField.new('b', @record.aspace_record.id_0),SubField.new('l', location_code)])
       end
 
       if user_defined['text_1']
         extra_fields << DataField.new('580', ' ', ' ', [SubField.new('a', user_defined['text_1'])])
+        extra_fields << DataField.new('710', '2', ' ', [SubField.new('a', user_defined['text_1'])])
       end
 
       if user_defined['text_2']
         extra_fields << DataField.new('830', ' ', '0', [SubField.new('p', user_defined['text_2'])])
+      end
+      
+      if user_defined['text_5']
+        extra_fields << DataField.new('518', ' ', ' ', [SubField.new('a', user_defined['text_5'])])
       end
 
     end

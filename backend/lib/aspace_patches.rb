@@ -16,8 +16,7 @@ class MARCModel < ASpaceExport::ExportModel
 
   def self.from_aspace_object(obj)
     self.new(obj)
-   end
-
+  end
 
   # https://github.com/archivesspace/archivesspace/pull/252
   def self.assemble_controlfield_string(obj)
@@ -33,8 +32,89 @@ class MARCModel < ASpaceExport::ExportModel
 
     string
   end
+  
+  # override to use Dates of Existence rather than the dates in the name form for creators
+  def handle_primary_creator(linked_agents)
+    link = linked_agents.find{|a| a['role'] == 'creator'}
+    return nil unless link
 
+    creator = link['_resolved']
+    name = creator['display_name']
+    dates_of_existence = creator['dates_of_existence'][0]
+    agent_dates = ''
+    ind2 = ' '
+    role_info = link['relator'] ? ['4', link['relator']] : ['e', 'creator']
+    
+    # dates of existence
+    if dates_of_existence['begin']
+      agent_dates = dates_of_existence['begin']
+      if dates_of_existence['end']
+        agent_dates = agent_dates + "-" + dates_of_existence['end']
+      end
+    else if dates_of_existence['expression']
+      agent_dates = dates_of_existence['expression']
+    end
+    end
+    
+    if agent_dates.empty?
+        agent_dates = name['dates']
+    end
 
+    case creator['agent_type']
+
+    when 'agent_corporate_entity'
+      code = '110'
+      ind1 = '2'
+      sfs = [
+              ['a', name['primary_name']],
+              ['b', name['subordinate_name_1']],
+              ['b', name['subordinate_name_2']],
+              ['n', name['number']],
+              ['d', agent_dates],
+              ['g', name['qualifier']],
+            ]
+
+    when 'agent_person'
+      joint, ind1 = name['name_order'] == 'direct' ? [' ', '0'] : [', ', '1']
+      name_parts = [name['primary_name'], name['rest_of_name']].reject{|i| i.nil? || i.empty?}.join(joint)
+
+      code = '100'
+      sfs = [
+              ['a', name_parts],
+              ['b', name['number']],
+              ['c', %w(prefix title suffix).map {|prt| name[prt]}.compact.join(', ')],
+              ['q', name['fuller_form']],
+              ['d', agent_dates],
+              ['g', name['qualifier']],
+            ]
+
+    when 'agent_family'
+      code = '100'
+      ind1 = '3'
+      sfs = [
+              ['a', name['family_name']],
+              ['c', name['prefix']],
+              ['d', agent_dates],
+              ['g', name['qualifier']],
+            ]
+    end
+
+    sfs << role_info
+    df(code, ind1, ind2).with_sfs(*sfs)
+  end
+  
+  # override to change finding aid 856 language
+  def handle_ead_loc(ead_loc)
+    df('555', ' ', ' ').with_sfs(
+                                  ['a', "View the finding aid for this resource."],
+                                  ['u', ead_loc]
+                                )
+    df('856', '4', '2').with_sfs(
+                                  ['z', "View the finding aid for this resource."],
+                                  ['u', ead_loc]
+                                )
+  end
+  
 end
 
 
