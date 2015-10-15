@@ -8,6 +8,9 @@ class EADUserDefinedFieldSerialize
         xml.physloc('label' => 'Location', 'audience' => 'internal') {
           xml.text data.user_defined['enum_1'].gsub(/^.* - /, '')
         }
+         xml.physloc('label' => 'Location', 'audience' => 'external') {
+          xml.text I18n.t({:enumeration => 'user_defined_enum_1', :value => data.user_defined['enum_1']}, :default => data.user_defined['enum_1']).gsub(/ - .*/, '')
+        }
       end
     elsif context == :archdesc
       # FIXME: Contribute this to the core code?
