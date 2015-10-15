@@ -4,12 +4,13 @@ class EADUserDefinedFieldSerialize
 
     if context == :did
       if data.user_defined && data.user_defined['enum_1']
+        enum_value = data.user_defined['enum_1']
 
         xml.physloc('label' => 'Location', 'audience' => 'internal') {
-          xml.text data.user_defined['enum_1'].gsub(/^.* - /, '')
+          xml.text I18n.t({:enumeration => 'user_defined_enum_1', :value => enum_value}, :default => enum_value).gsub(/^.* - /, '')
         }
          xml.physloc('label' => 'Location', 'audience' => 'external') {
-          xml.text I18n.t({:enumeration => 'user_defined_enum_1', :value => data.user_defined['enum_1']}, :default => data.user_defined['enum_1']).gsub(/ - .*/, '')
+          xml.text I18n.t({:enumeration => 'user_defined_enum_1', :value => enum_value}, :default => enum_value).gsub(/ - .*/, '')
         }
       end
     elsif context == :archdesc
