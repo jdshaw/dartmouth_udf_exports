@@ -44,7 +44,7 @@ class MARCModel < ASpaceExport::ExportModel
 
     creator = link['_resolved']
     name = creator['display_name']
-    dates_of_existence = creator['dates_of_existence'][0]
+    dates_of_existence = creator['dates_of_existence'][0] ? creator['dates_of_existence'][0] : ''
     agent_dates = ''
     ind2 = ' '
     role_info = link['relator'] ? ['4', link['relator']] : ['e', 'creator']
