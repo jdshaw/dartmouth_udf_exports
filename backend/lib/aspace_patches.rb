@@ -21,6 +21,18 @@ class MARCModel < ASpaceExport::ExportModel
   def self.from_aspace_object(obj)
     self.new(obj)
   end
+  
+  # change the record type to "t" rather than "p" in the leader
+  def self.from_resource(obj)
+    marc = self.from_archival_object(obj)
+    marc.apply_map(obj, @resource_map)
+    marc.leader_string = "00000nt$ a2200000 u 4500"
+    marc.leader_string[7] = obj.level == 'item' ? 'm' : 'c'
+
+    marc.controlfield_string = assemble_controlfield_string(obj)
+
+    marc
+  end
 
   # https://github.com/archivesspace/archivesspace/pull/252
   def self.assemble_controlfield_string(obj)
@@ -105,6 +117,26 @@ class MARCModel < ASpaceExport::ExportModel
 
     sfs << role_info
     df(code, ind1, ind2).with_sfs(*sfs)
+  end
+  
+  # switch the order of the extents for local rules
+  def handle_extents(extents)
+    extents.each do |ext|
+      
+      extent = ''
+      
+      e2 = ext['number']
+      e2 << " #{I18n.t('enumerations.extent_extent_type.'+ext['extent_type'], :default => ext['extent_type'])}"
+
+      if ext['container_summary']
+        extent = ext['container_summary']
+        extent << " (#{e2})"
+      else
+        extent = e2
+      end
+
+      df!('300').with_sfs(['a', extent])
+    end
   end
   
   # override to change finding aid 856 language
