@@ -7,6 +7,17 @@
 # made by @jdshaw -- Mark Triggs, Friday 16 October, 2015
 #
 class MARCModel < ASpaceExport::ExportModel
+  
+  @archival_object_map = {
+    :repository => :handle_repo_code,
+    :title => :handle_title,
+    :linked_agents => :handle_agents,
+    :subjects => :handle_subjects,
+    :extents => :handle_extents,
+    :language => :handle_language,
+    :dates => :handle_dates,
+  }
+  
   attr_reader :aspace_record
 
   def initialize(obj)
