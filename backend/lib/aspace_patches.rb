@@ -33,6 +33,10 @@ class MARCModel < ASpaceExport::ExportModel
 
     marc
   end
+     
+  def handle_language(langcode)
+    # don't export the 040, 041 and 049 language codes - local rules
+  end
   
   # override to use Dates of Existence rather than the dates in the name form for creators
   def handle_primary_creator(linked_agents)
