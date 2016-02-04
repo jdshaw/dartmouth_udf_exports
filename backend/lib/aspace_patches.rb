@@ -33,7 +33,11 @@ class MARCModel < ASpaceExport::ExportModel
 
     marc
   end
-
+     
+  def handle_language(langcode)
+    # don't export the 040, 041 and 049 language codes - local rules
+  end
+  
   # https://github.com/archivesspace/archivesspace/pull/252
   def self.assemble_controlfield_string(obj)
     date = obj.dates[0] || {}
