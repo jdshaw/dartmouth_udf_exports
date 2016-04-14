@@ -44,11 +44,7 @@ class MARCModel < ASpaceExport::ExportModel
 
     marc
   end
-     
-  def handle_language(langcode)
-    # don't export the 040, 041 and 049 language codes - local rules
-  end
-  
+
   # https://github.com/archivesspace/archivesspace/pull/252
   def self.assemble_controlfield_string(obj)
     date = obj.dates[0] || {}
@@ -62,6 +58,10 @@ class MARCModel < ASpaceExport::ExportModel
     string += ' d'
 
     string
+  end
+   
+  def handle_language(langcode)
+    # don't export the 040, 041 and 049 language codes - local rules
   end
   
   # override to use Dates of Existence rather than the dates in the name form for creators
@@ -132,6 +132,168 @@ class MARCModel < ASpaceExport::ExportModel
 
     sfs << role_info
     df(code, ind1, ind2).with_sfs(*sfs)
+  end
+  
+  def handle_agents(linked_agents)
+    
+    subjects = linked_agents.select{|a| a['role'] == 'subject'}
+
+    subjects.each_with_index do |link, i|
+      subject = link['_resolved']
+      name = subject['display_name']
+      relator = link['relator']
+      terms = link['terms']
+      ind2 = source_to_code(name['source'])
+
+      case subject['agent_type']
+
+      when 'agent_corporate_entity'
+        code = '610'
+        ind1 = '2'
+        sfs = [
+                ['a', name['primary_name']],
+                ['b', name['subordinate_name_1']],
+                ['b', name['subordinate_name_2']],
+                ['n', name['number']],
+                ['g', name['qualifier']],
+              ]
+
+      when 'agent_person'
+        joint, ind1 = name['name_order'] == 'direct' ? [' ', '0'] : [', ', '1']
+        name_parts = [name['primary_name'], name['rest_of_name']].reject{|i| i.nil? || i.empty?}.join(joint)
+        ind1 = name['name_order'] == 'direct' ? '0' : '1'
+        code = '600'
+        sfs = [
+                ['a', name_parts],
+                ['b', name['number']],
+                ['c', %w(prefix title suffix).map {|prt| name[prt]}.compact.join(', ')],
+                ['q', name['fuller_form']],
+                ['d', name['dates']],
+                ['g', name['qualifier']],
+              ]
+
+      when 'agent_family'
+        code = '600'
+        ind1 = '3'
+        sfs = [
+                ['a', name['family_name']],
+                ['c', name['prefix']],
+                ['d', name['dates']],
+                ['g', name['qualifier']],
+              ]
+
+      end
+
+      terms.each do |t|
+        tag = case t['term_type']
+          when 'uniform_title'; 't'
+          when 'genre_form', 'style_period'; 'v'
+          when 'topical', 'cultural_context'; 'x'
+          when 'temporal'; 'y'
+          when 'geographic'; 'z'
+          end
+        sfs << [(tag), t['term']]
+      end
+
+      if ind2 == '7'
+        sfs << ['2', subject['source']]
+      end
+
+      df(code, ind1, ind2, i).with_sfs(*sfs)
+    end
+
+    handle_primary_creator(linked_agents)
+    
+    # don't use 700 or 710 for sources, use 561 instead
+    creators = linked_agents.select{|a| a['role'] == 'creator'}[1..-1] || []
+    creators = creators + linked_agents.select{|a| a['role'] == 'source'}
+
+    creators.each do |link|
+      creator = link['_resolved']
+      name = creator['display_name']
+      relator = link['relator']
+      terms = link['terms']
+      role = link['role']
+
+      if relator
+        relator_sf = ['4', relator]
+      elsif role == 'source'
+        relator_sf =  []
+      else
+        relator_sf = ['e', 'creator']
+      end
+
+      ind2 = ' '
+      
+      if role == 'creator'
+      
+        case creator['agent_type']
+  
+        when 'agent_corporate_entity'
+          code = '710'
+          ind1 = '2'
+          sfs = [
+                  ['a', name['primary_name']],
+                  ['b', name['subordinate_name_1']],
+                  ['b', name['subordinate_name_2']],
+                  ['n', name['number']],
+                  ['g', name['qualifier']],
+                ]
+  
+        when 'agent_person'
+          joint, ind1 = name['name_order'] == 'direct' ? [' ', '0'] : [', ', '1']
+          name_parts = [name['primary_name'], name['rest_of_name']].reject{|i| i.nil? || i.empty?}.join(joint)
+          ind1 = name['name_order'] == 'direct' ? '0' : '1'
+          code = '700'
+          sfs = [
+                  ['a', name_parts],
+                  ['b', name['number']],
+                  ['c', %w(prefix title suffix).map {|prt| name[prt]}.compact.join(', ')],
+                  ['q', name['fuller_form']],
+                  ['d', name['dates']],
+                  ['g', name['qualifier']],
+                ]
+  
+        when 'agent_family'
+          ind1 = '3'
+          code = '700'
+          sfs = [
+                  ['a', name['family_name']],
+                  ['c', name['prefix']],
+                  ['d', name['dates']],
+                  ['g', name['qualifier']],
+                ]
+        end
+      end
+      
+      if role == 'source'
+        joint = name['name_order'] == 'direct' ? ', ' : ' '
+        ind1 = '1'
+        ind2 = ' '
+        code = '561'
+        
+        case creator['agent_type']
+        
+          when 'agent_corporate_entity'
+            sfs = [
+                    ['a', 'Formerly owned by ' +  name['primary_name']],
+                  ]    
+
+          when 'agent_person'
+            sfs = [
+                    ['a', 'Formerly owned by ' +  [name['rest_of_name'], name['primary_name']].reject{|i| i.nil? || i.empty?}.join(joint)],
+                  ]
+          
+          when 'agent_family'
+            sfs = [
+                    ['a', 'Formerly owned by ' +  name['family_name']],
+                  ]          
+        end
+      end
+      sfs << relator_sf
+      df(code, ind1, ind2).with_sfs(*sfs)
+    end
+    
   end
   
   # switch the order of the extents for local rules
