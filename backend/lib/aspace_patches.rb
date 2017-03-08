@@ -11,12 +11,20 @@ class MARCModel < ASpaceExport::ExportModel
   @archival_object_map = {
     :repository => :handle_repo_code,
     :title => :handle_title,
+    :user_defined => :handle_title_extras,
     :linked_agents => :handle_agents,
     :subjects => :handle_subjects,
     :extents => :handle_extents,
     :language => :handle_language,
-    :dates => :handle_dates,
+    [:dates, :id_0] => :handle_dates,
   }
+  
+  @resource_map = {
+    [:id_0, :id_1, :id_2, :id_3] => :handle_id,
+    :notes => :handle_notes,
+    :finding_aid_description_rules => :handle_finding_aid_rules,
+    :ead_location => :handle_ead_loc
+}
   
   attr_reader :aspace_record
 
@@ -34,34 +42,93 @@ class MARCModel < ASpaceExport::ExportModel
   end
   
   # change the record type to "t" rather than "p" in the leader
+  # or "k" for dcrmg
+  # also change position 8 to "a" if not dcrmg
+  # also change position 33 to "k" if dcrmg
   def self.from_resource(obj)
     marc = self.from_archival_object(obj)
     marc.apply_map(obj, @resource_map)
-    marc.leader_string = "00000nt$ a2200000 u 4500"
+    marc.leader_string = "00000n$$$a2200000 u 4500         $"
+    
+    # determine cataloging standard
+    marc.leader_string[6] = case obj.finding_aid_description_rules
+      when 'dcrmg'
+        'k'
+      else 't'
+    end
+    
     marc.leader_string[7] = obj.level == 'item' ? 'm' : 'c'
-
+    marc.leader_string[7] = obj.id_0 =~ /doh/i ? 'm' : marc.leader_string[7]
+    
+    marc.leader_string[8] = case obj.finding_aid_description_rules
+      when 'dcrmg'
+        ' '
+      else 'a'
+    end
+    
+    marc.leader_string[33] = case obj.finding_aid_description_rules
+      when 'dcrmg'
+        'k'
+      else ' '
+    end
+    
     marc.controlfield_string = assemble_controlfield_string(obj)
 
     marc
   end
-
-  # https://github.com/archivesspace/archivesspace/pull/252
-  def self.assemble_controlfield_string(obj)
-    date = obj.dates[0] || {}
-    string = obj['system_mtime'].scan(/\d{2}/)[1..3].join('')
-    string += obj.level == 'item' && date['date_type'] == 'single' ? 's' : 'i'
-    string += date['begin'] ? date['begin'][0..3] : "    "
-    string += date['end'] ? date['end'][0..3] : "    "
-    string += "xx"
-    18.times { string += ' ' }
-    string += (obj.language || '|||')
-    string += ' d'
-
-    string
-  end
    
   def handle_language(langcode)
     # don't export the 040, 041 and 049 language codes - local rules
+  end
+  
+  def handle_id(*ids)
+    # don't export the 099 or 852 - local rules
+  end
+  
+  def handle_dates(dates, id_0)
+    return false if dates.empty?
+
+    dates = [["single", "inclusive", "range"], ["bulk"]].map {|types|
+      dates.find {|date| types.include? date['date_type'] }
+    }.compact
+
+    dates.each do |date|
+      code = date['date_type'] == 'bulk' ? 'g' : 'f'
+      val = nil
+      if date['expression'] && date['date_type'] != 'bulk'
+        val = date['expression']
+      elsif date['date_type'] == 'single'
+        val = date['begin']
+        if id_0 =~/doh/i
+          val = Date.parse(date['begin']).strftime('%Y %B %-d')
+        end 
+      else
+        if id_0 =~/doh/i
+          val = "#{Date.parse(date['begin']).strftime('%Y %B %-d')} - #{Date.parse(date['end']).strftime('%Y %B %-d')}"
+        else
+          val = "#{date['begin']} - #{date['end']}"
+        end
+      end
+
+      df('245', '1', '0').with_sfs([code, val])
+    end
+  end
+  
+  def handle_finding_aid_rules(finding_aid_description_rules)
+    sfs = [['e',finding_aid_description_rules]]
+    
+    case finding_aid_description_rules
+      when 'dcrmmss'
+        sfs_add = ['e','rda']
+      when 'dcrmg'
+        sfs_add = ['e','rda']        
+    end
+    if sfs_add
+        sfs.unshift(sfs_add)
+    end
+    
+    df('040', ' ', ' ').with_sfs(*sfs)
+
   end
   
   # override to use Dates of Existence rather than the dates in the name form for creators
@@ -297,6 +364,7 @@ class MARCModel < ASpaceExport::ExportModel
   end
   
   # switch the order of the extents for local rules
+  # add the 300|b and 300|c to the extents
   def handle_extents(extents)
     extents.each do |ext|
       
@@ -311,309 +379,276 @@ class MARCModel < ASpaceExport::ExportModel
       else
         extent = e2
       end
+      
+      # 300|b
+      physdesc = ext['physical_details']
+      
+      # 300|c
+      dimensions = ext['dimensions']
 
-      df!('300').with_sfs(['a', extent])
+      df!('300').with_sfs(
+                           ['a', extent],
+                           ['b', physdesc],
+                           ['c', dimensions]
+                          )
+    end
+  end
+  
+  # never export the processing notes
+  def handle_notes(notes)
+
+    notes.each do |note|
+
+      prefix =  case note['type']
+                when 'dimensions'; "Dimensions"
+                when 'physdesc'; "Physical Description note"
+                when 'materialspec'; "Material Specific Details"
+                when 'physloc'; "Location of resource"
+                when 'phystech'; "Physical Characteristics / Technical Requirements"
+                when 'physfacet'; "Physical Facet"
+                # when 'processinfo'; "Processing Information"
+                when 'separatedmaterial'; "Materials Separated from the Resource"
+                else; nil
+                end
+
+      marc_args = case note['type']
+
+                  when 'arrangement', 'fileplan'
+                    ['351','b']
+                  when 'odd', 'dimensions', 'physdesc', 'materialspec', 'physloc', 'phystech', 'physfacet', 'separatedmaterial'
+                    ['500','a']
+                  when 'accessrestrict'
+                    ['506','a']
+                  when 'scopecontent'
+                    ['520', '2', ' ', 'a']
+                  when 'abstract'
+                    ['520', '3', ' ', 'a']
+                  when 'prefercite'
+                    ['524', '8', ' ', 'a']
+                  when 'acqinfo'
+                    ind1 = note['publish'] ? '1' : '0'
+                    ['541', ind1, ' ', 'a']
+                  when 'relatedmaterial'
+                    ['544','a']
+                  when 'bioghist'
+                    ['545','a']
+                  when 'custodhist'
+                    ind1 = note['publish'] ? '1' : '0'
+                    ['561', ind1, ' ', 'a']
+                  when 'appraisal'
+                    ind1 = note['publish'] ? '1' : '0'
+                    ['583', ind1, ' ', 'a']
+                  when 'accruals'
+                    ['584', 'a']
+                  when 'altformavail'
+                    ['535', '2', ' ', 'a']
+                  when 'originalsloc'
+                    ['535', '1', ' ', 'a']
+                  when 'userestrict', 'legalstatus'
+                    ['540', 'a']
+                  when 'langmaterial'
+                    ['546', 'a']
+                  else
+                    nil
+                  end
+
+      unless marc_args.nil?
+        text = prefix ? "#{prefix}: " : ""
+        text += ASpaceExport::Utils.extract_note_text(note)
+        df!(*marc_args[0...-1]).with_sfs([marc_args.last, *Array(text)])
+      end
+
     end
   end
   
   # override to change finding aid 856 language
   def handle_ead_loc(ead_loc)
-    df('555', ' ', ' ').with_sfs(
-                                  ['a', "View the finding aid for this resource."],
-                                  ['u', ead_loc]
-                                )
     df('856', '4', '2').with_sfs(
                                   ['z', "View the finding aid for this resource."],
                                   ['u', ead_loc]
                                 )
   end
   
-end
-
-
-if !EADSerializer.respond_to?(:add_serialize_step)
-
-  class EADSerializer < ASpaceExport::Serializer
-
-    # Allow plugins to hook in to record processing by providing their own
-    # serialization step (a class with a 'call' method accepting the arguments
-    # defined in `run_serialize_step`.
-    def self.add_serialize_step(serialize_step)
-      @extra_serialize_steps ||= []
-      @extra_serialize_steps << serialize_step
+  # add in the material type 245|b
+  def handle_title_extras(user_defined)
+    if user_defined['text_4']
+      df('245', '1', '0').with_sfs(['b', user_defined['text_4'].downcase])
     end
-
-    def self.run_serialize_step(data, xml, fragments, context)
-      Array(@extra_serialize_steps).each do |step|
-        step.new.call(data, xml, fragments, context)
-      end
-    end
-
-
-    def stream(data)
-      @stream_handler = ASpaceExport::StreamHandler.new
-      @fragments = ASpaceExport::RawXMLHandler.new
-      @include_unpublished = data.include_unpublished?
-      @use_numbered_c_tags = data.use_numbered_c_tags?
-      @id_prefix = I18n.t('archival_object.ref_id_export_prefix', :default => 'aspace_')
-
-      doc = Nokogiri::XML::Builder.new(:encoding => "UTF-8") do |xml|
-        begin 
-
-          xml.ead(                  'xmlns:xsi' => 'http://www.w3.org/2001/XMLSchema-instance',
-                                    'xsi:schemaLocation' => 'urn:isbn:1-931666-22-9 http://www.loc.gov/ead/ead.xsd',
-                                    'xmlns:xlink' => 'http://www.w3.org/1999/xlink') {
-
-            xml.text (
-              @stream_handler.buffer { |xml, new_fragments|
-                serialize_eadheader(data, xml, new_fragments)
-              })
-
-            atts = {:level => data.level, :otherlevel => data.other_level}
-
-            if data.publish === false
-              if @include_unpublished
-                atts[:audience] = 'internal'
-              else
-                return
-              end
-            end
-
-            atts.reject! {|k, v| v.nil?}
-
-            xml.archdesc(atts) {
-              
-
-
-              xml.did {
-                
-
-                if (val = data.language)
-                  xml.langmaterial {
-                    xml.language(:langcode => val) {
-                      xml.text I18n.t("enumerations.language_iso639_2.#{val}", :default => val)
-                    }
-                  }
-                end
-
-                if (val = data.repo.name)
-                  xml.repository {
-                    xml.corpname { sanitize_mixed_content(val, xml, @fragments) }
-                  }
-                end
-
-                if (val = data.title)
-                  xml.unittitle  {   sanitize_mixed_content(val, xml, @fragments) } 
-                end
-
-                serialize_origination(data, xml, @fragments)
-
-                xml.unitid (0..3).map{|i| data.send("id_#{i}")}.compact.join('.')
-
-                serialize_extents(data, xml, @fragments)
-
-                serialize_dates(data, xml, @fragments)
-
-                serialize_did_notes(data, xml, @fragments)
-
-                data.instances_with_containers.each do |instance|
-                  serialize_container(instance, xml, @fragments)
-                end
-
-                EADSerializer.run_serialize_step(data, xml, @fragments, :did)
-
-              }# </did>
-              
-              data.digital_objects.each do |dob|
-                serialize_digital_object(dob, xml, @fragments)
-              end
-
-              serialize_nondid_notes(data, xml, @fragments)
-
-              serialize_bibliographies(data, xml, @fragments)
-
-              serialize_indexes(data, xml, @fragments)
-
-              serialize_controlaccess(data, xml, @fragments)
-
-              EADSerializer.run_serialize_step(data, xml, @fragments, :archdesc)
-
-              xml.dsc {
-
-                data.children_indexes.each do |i|
-                  xml.text(
-                    @stream_handler.buffer {|xml, new_fragments|
-                      serialize_child(data.get_child(i), xml, new_fragments)
-                    }
-                  )
-                end
-              }
-            }
-          }
-          
-        rescue => e
-          xml.text  "ASPACE EXPORT ERROR : YOU HAVE A PROBLEM WITH YOUR EXPORT OF YOUR RESOURCE. THE FOLLOWING INFORMATION MAY HELP:\n
-                MESSAGE: #{e.message.inspect}  \n
-                TRACE: #{e.backtrace.inspect} \n "
-        end
-        
-        
-        
-      end
-      doc.doc.root.add_namespace nil, 'urn:isbn:1-931666-22-9'
-
-      Enumerator.new do |y|
-        @stream_handler.stream_out(doc, @fragments, y)
-      end
-      
-      
-    end
-
-
-    def serialize_child(data, xml, fragments, c_depth = 1)
-      begin 
-        return if data["publish"] === false && !@include_unpublished
-
-        tag_name = @use_numbered_c_tags ? :"c#{c_depth.to_s.rjust(2, '0')}" : :c
-
-        atts = {:level => data.level, :otherlevel => data.other_level, :id => prefix_id(data.ref_id)}
-
-        if data.publish === false
-          atts[:audience] = 'internal'
-        end
-
-        atts.reject! {|k, v| v.nil?}
-        xml.send(tag_name, atts) {
-
-          xml.did {
-            if (val = data.title)
-              xml.unittitle {  sanitize_mixed_content( val,xml, fragments) } 
-            end
-
-            if !data.component_id.nil? && !data.component_id.empty?
-              xml.unitid data.component_id
-            end
-
-            serialize_origination(data, xml, fragments)
-            serialize_extents(data, xml, fragments)
-            serialize_dates(data, xml, fragments)
-            serialize_did_notes(data, xml, fragments)
-
-            EADSerializer.run_serialize_step(data, xml, fragments, :did)
-
-            # TODO: Clean this up more; there's probably a better way to do this.
-            # For whatever reason, the old ead_containers method was not working
-            # on archival_objects (see migrations/models/ead.rb).
-
-            data.instances.each do |inst|
-              case 
-              when inst.has_key?('container') && !inst['container'].nil?
-                serialize_container(inst, xml, fragments)
-              when inst.has_key?('digital_object') && !inst['digital_object']['_resolved'].nil?
-                serialize_digital_object(inst['digital_object']['_resolved'], xml, fragments)
-              end
-            end
-
-          }
-
-          serialize_nondid_notes(data, xml, fragments)
-
-          serialize_bibliographies(data, xml, fragments)
-
-          serialize_indexes(data, xml, fragments)
-
-          serialize_controlaccess(data, xml, fragments)
-
-          EADSerializer.run_serialize_step(data, xml, fragments, :archdesc)
-
-          data.children_indexes.each do |i|
-            xml.text(
-              @stream_handler.buffer {|xml, new_fragments|
-                serialize_child(data.get_child(i), xml, new_fragments, c_depth + 1)
-              }
-            )
-          end
-        }
-      rescue => e
-        xml.text "ASPACE EXPORT ERROR : YOU HAVE A PROBLEM WITH YOUR EXPORT OF ARCHIVAL OBJECTS. THE FOLLOWING INFORMATION MAY HELP:\n
-
-                MESSAGE: #{e.message.inspect}  \n
-                TRACE: #{e.backtrace.inspect} \n "
-      end
-    end
-
-
-
   end
+  
 end
 
 
-if !MARCSerializer.respond_to?(:add_decorator)
+class MARCSerializer < ASpaceExport::Serializer 
+ 
+  private
 
-  class MARCSerializer < ASpaceExport::Serializer
+  def _root(marc, xml)
 
-    # Allow plugins to wrap the MARC record with their own behavior.  Gives them
-    # the chance to change the leader, 008, add extra data fields, etc.
-    def self.add_decorator(decorator)
-      @decorators ||= []
-      @decorators << decorator
-    end
+    xml.collection('xmlns' => 'http://www.loc.gov/MARC21/slim',
+                 'xmlns:xsi' => 'http://www.w3.org/2001/XMLSchema-instance',
+                 'xsi:schemaLocation' => 'http://www.loc.gov/standards/marcxml/schema/MARC21slim.xsd'){
 
-    def self.decorate_record(record)
-      Array(@decorators).reduce(record) {|result, decorator|
-        decorator.new(result)
-      }
-    end
+      xml.record {
 
-    def serialize(marc, opts = {})
+        xml.leader {
+         xml.text marc.leader_string
+        }
 
-      builder = build(marc, opts)
-      builder = build(MARCSerializer.decorate_record(marc), opts)
-
-      builder.to_xml
-    end
-
-
-    def _root(marc, xml)
-
-      xml.collection('xmlns' => 'http://www.loc.gov/MARC21/slim',
-                     'xmlns:xsi' => 'http://www.w3.org/2001/XMLSchema-instance',
-                     'xsi:schemaLocation' => 'http://www.loc.gov/standards/marcxml/schema/MARC21slim.xsd'){
-
-        xml.record {
-
-          xml.leader {
-            xml.text marc.leader_string
-          }
-
-          xml.controlfield(:tag => '008') {
-            xml.text marc.controlfield_string
-          }
-
-          marc.controlfields.each do |cf|
+        xml.controlfield(:tag => '008') {
+         xml.text marc.controlfield_string
+        }
+        
+        marc.controlfields.each do |cf|
             xml.controlfield(:tag => cf.tag) {
               xml.text cf.text
             }
-          end
+        end
 
-          marc.datafields.each do |df|
+        marc.datafields.each do |df|
 
-            df.ind1 = ' ' if df.ind1.nil?
-            df.ind2 = ' ' if df.ind2.nil?
+          df.ind1 = ' ' if df.ind1.nil?
+          df.ind2 = ' ' if df.ind2.nil?
 
-            xml.datafield(:tag => df.tag, :ind1 => df.ind1, :ind2 => df.ind2) {
+          xml.datafield(:tag => df.tag, :ind1 => df.ind1, :ind2 => df.ind2) {
 
-              df.subfields.each do |sf|
+            df.subfields.each do |sf|
 
-                xml.subfield(:code => sf.code){
-                  xml.text sf.text.gsub(/<[^>]*>/, ' ')
+              xml.subfield(:code => sf.code){
+                xml.text sf.text.gsub(/<[^>]*>/, ' ')
+              }
+            end
+          }
+        end
+      }
+    }
+  end
+end
+
+class EADSerializer < ASpaceExport::Serializer
+  
+  # we're patching this method to deal with the genreform in the unittitle
+  def stream(data)
+    @stream_handler = ASpaceExport::StreamHandler.new
+    @fragments = ASpaceExport::RawXMLHandler.new
+    @include_unpublished = data.include_unpublished?
+    @include_daos = data.include_daos?
+    @use_numbered_c_tags = data.use_numbered_c_tags?
+    @id_prefix = I18n.t('archival_object.ref_id_export_prefix', :default => 'aspace_')
+
+    doc = Nokogiri::XML::Builder.new(:encoding => "UTF-8") do |xml|
+      begin
+
+      ead_attributes = {
+        'xmlns:xsi' => 'http://www.w3.org/2001/XMLSchema-instance',
+        'xsi:schemaLocation' => 'urn:isbn:1-931666-22-9 http://www.loc.gov/ead/ead.xsd',
+        'xmlns:xlink' => 'http://www.w3.org/1999/xlink'
+      }
+
+      if data.publish === false
+        ead_attributes['audience'] = 'internal'
+      end
+
+      xml.ead( ead_attributes ) {
+
+        xml.text (
+          @stream_handler.buffer { |xml, new_fragments|
+            serialize_eadheader(data, xml, new_fragments)
+          })
+
+        atts = {:level => data.level, :otherlevel => data.other_level}
+        atts.reject! {|k, v| v.nil?}
+
+        xml.archdesc(atts) {
+
+          xml.did {
+
+
+            if (val = data.language)
+              xml.langmaterial {
+                xml.language(:langcode => val) {
+                  xml.text I18n.t("enumerations.language_iso639_2.#{val}", :default => val)
                 }
-              end
-            }
+              }
+            end
+
+            if (val = data.repo.name)
+              xml.repository {
+                xml.corpname { sanitize_mixed_content(val, xml, @fragments) }
+              }
+            end
+
+            if (val = data.title)
+              xml.unittitle  {
+                sanitize_mixed_content(val, xml, @fragments)
+                # genreform patch
+                if data.user_defined && data.user_defined['text_4']
+                  genreformtxt = data.user_defined['text_4']
+                  xml.genreform{xml.text(genreformtxt)}
+                end
+                }
+            end
+
+            serialize_origination(data, xml, @fragments)
+
+            xml.unitid (0..3).map{|i| data.send("id_#{i}")}.compact.join('.')
+
+            serialize_extents(data, xml, @fragments)
+
+            serialize_dates(data, xml, @fragments)
+
+            serialize_did_notes(data, xml, @fragments)
+
+            data.instances_with_containers.each do |instance|
+              serialize_container(instance, xml, @fragments)
+            end
+
+            EADSerializer.run_serialize_step(data, xml, @fragments, :did)
+
+          }# </did>
+
+          data.digital_objects.each do |dob|
+                serialize_digital_object(dob, xml, @fragments)
           end
+
+          serialize_nondid_notes(data, xml, @fragments)
+
+          serialize_bibliographies(data, xml, @fragments)
+
+          serialize_indexes(data, xml, @fragments)
+
+          serialize_controlaccess(data, xml, @fragments)
+
+          EADSerializer.run_serialize_step(data, xml, @fragments, :archdesc)
+
+          xml.dsc {
+
+            data.children_indexes.each do |i|
+              xml.text(
+                       @stream_handler.buffer {|xml, new_fragments|
+                         serialize_child(data.get_child(i), xml, new_fragments)
+                       }
+                       )
+            end
+          }
         }
       }
-    end
-  end
 
+    rescue => e
+      xml.text  "ASPACE EXPORT ERROR : YOU HAVE A PROBLEM WITH YOUR EXPORT OF YOUR RESOURCE. THE FOLLOWING INFORMATION MAY HELP:\n
+                MESSAGE: #{e.message.inspect}  \n
+                TRACE: #{e.backtrace.inspect} \n "
+    end
+
+
+
+    end
+    doc.doc.root.add_namespace nil, 'urn:isbn:1-931666-22-9'
+
+    Enumerator.new do |y|
+      @stream_handler.stream_out(doc, @fragments, y)
+    end
+
+
+  end
 end

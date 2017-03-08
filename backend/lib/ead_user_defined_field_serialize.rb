@@ -13,6 +13,7 @@ class EADUserDefinedFieldSerialize
           xml.text I18n.t({:enumeration => 'user_defined_enum_1', :value => enum_value}, :default => enum_value).gsub(/ - .*/, '')
         }
       end
+      
     elsif context == :archdesc
       # FIXME: Contribute this to the core code?
       ASUtils.wrap(data.linked_agents).each do |linked_agent|
@@ -42,6 +43,12 @@ class EADUserDefinedFieldSerialize
               end
             end
         end
+      end
+      
+    elsif context == :titlestmt
+      if data.user_defined && data.user_defined['text_4']
+        subtitle = data.user_defined['text_4']
+        xml.subtitle{xml.text(subtitle)}
       end
     end
 

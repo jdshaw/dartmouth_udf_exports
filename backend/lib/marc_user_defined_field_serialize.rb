@@ -60,8 +60,8 @@ class MARCUserDefinedFieldSerialize
         extra_fields << DataField.new('710', '2', ' ', [SubField.new('a', user_defined['text_1'])])
       end
 
-      if user_defined['text_2']
-        extra_fields << DataField.new('830', ' ', '0', [SubField.new('p', user_defined['text_2'])])
+      if user_defined['text_1'] && user_defined['text_2']
+        extra_fields << DataField.new('830', ' ', '0', [SubField.new('a', user_defined['text_1']), SubField.new('p', user_defined['text_2'])])
       end
       
       if user_defined['text_5']
