@@ -28,7 +28,9 @@ class EADUserDefinedFieldSerialize
                         xml.bioghist {
                           xml.head {
                             if agent['jsonmodel_type'] == 'agent_corporate_entity'
-                              xml.text("Introduction")
+                              xml.text("History")
+                            elsif agent['jsonmodel_type'] == 'agent_family'
+                              xml.text("Family History")
                             else
                               xml.text("Biography")
                             end

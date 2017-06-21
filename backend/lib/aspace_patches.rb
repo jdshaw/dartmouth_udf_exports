@@ -342,18 +342,19 @@ class MARCModel < ASpaceExport::ExportModel
         case creator['agent_type']
         
           when 'agent_corporate_entity'
+            ownership_language = 'Gift of '
             sfs = [
-                    ['a', 'Formerly owned by ' +  name['primary_name']],
+                    ['a', ownership_language +  name['primary_name']],
                   ]    
 
           when 'agent_person'
             sfs = [
-                    ['a', 'Formerly owned by ' +  [name['rest_of_name'], name['primary_name']].reject{|i| i.nil? || i.empty?}.join(joint)],
+                    ['a', ownership_language +  [name['rest_of_name'], name['primary_name']].reject{|i| i.nil? || i.empty?}.join(joint)],
                   ]
           
           when 'agent_family'
             sfs = [
-                    ['a', 'Formerly owned by ' +  name['family_name']],
+                    ['a', ownership_language +  name['family_name']],
                   ]          
         end
       end
