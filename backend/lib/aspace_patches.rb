@@ -10,13 +10,14 @@ class MARCModel < ASpaceExport::ExportModel
   
   @archival_object_map = {
     :repository => :handle_repo_code,
-    :title => :handle_title,
+    [:title, :dates, :id_0, :finding_aid_description_rules, :user_defined] => :handle_title,
     :user_defined => :handle_title_extras,
+    :user_defined => :handle_production_place,
     :linked_agents => :handle_agents,
     :subjects => :handle_subjects,
     :extents => :handle_extents,
     :language => :handle_language,
-    [:dates, :id_0] => :handle_dates,
+    [:dates, :id_0, :finding_aid_description_rules] => :handle_dates,
   }
   
   @resource_map = {
@@ -66,6 +67,10 @@ class MARCModel < ASpaceExport::ExportModel
       else 'a'
     end
     
+    marc.leader_string[17] = 'i'
+    
+    marc.leader_string[18] = 'i'
+    
     marc.leader_string[33] = case obj.finding_aid_description_rules
       when 'dcrmg'
         'k'
@@ -76,6 +81,21 @@ class MARCModel < ASpaceExport::ExportModel
 
     marc
   end
+  
+  # let the date_type determine the 008 date indicator without the description level
+  def self.assemble_controlfield_string(obj)
+      date = obj.dates[0] || {}
+      string = obj['system_mtime'].scan(/\d{2}/)[1..3].join('')
+      string += date['date_type'] == 'single' ? 's' : 'i'
+      string += date['begin'] ? date['begin'][0..3] : "    "
+      string += date['end'] ? date['end'][0..3] : "    "
+      string += "xx"
+      18.times { string += ' ' }
+      string += (obj.language || '|||')
+      string += ' d'
+  
+      string
+  end
    
   def handle_language(langcode)
     # don't export the 040, 041 and 049 language codes - local rules
@@ -85,10 +105,10 @@ class MARCModel < ASpaceExport::ExportModel
     # don't export the 099 or 852 - local rules
   end
   
-  def handle_dates(dates, id_0)
+  def handle_dates(dates, id_0, finding_aid_description_rules)
     return false if dates.empty?
-
-    dates = [["single", "inclusive", "range"], ["bulk"]].map {|types|
+    
+    dates = [["single","inclusive", "range"], ["bulk"]].map {|types|
       dates.find {|date| types.include? date['date_type'] }
     }.compact
 
@@ -97,7 +117,10 @@ class MARCModel < ASpaceExport::ExportModel
       val = nil
       if date['expression'] && date['date_type'] != 'bulk'
         val = date['expression']
-      elsif date['date_type'] == 'single'
+        if finding_aid_description_rules == 'dcrmg' or finding_aid_description_rules == 'dcrmmss'
+          val = "[" + val + "]"
+        end
+      elsif date['date_type'] == 'single' && (finding_aid_description_rules == 'dcrmg' || finding_aid_description_rules == 'dcrmmss')
         val = date['begin']
         if id_0 =~/doh/i
           val = Date.parse(date['begin']).strftime('%Y %B %-d')
@@ -109,7 +132,7 @@ class MARCModel < ASpaceExport::ExportModel
           val = "#{date['begin']} - #{date['end']}"
         end
       end
-
+      df('264','#', '0').with_sfs(['c', val])
       df('245', '1', '0').with_sfs([code, val])
     end
   end
@@ -171,6 +194,8 @@ class MARCModel < ASpaceExport::ExportModel
               ['d', agent_dates],
               ['g', name['qualifier']],
             ]
+      
+      name_264 = name['primary_name']
 
     when 'agent_person'
       joint, ind1 = name['name_order'] == 'direct' ? [' ', '0'] : [', ', '1']
@@ -185,6 +210,8 @@ class MARCModel < ASpaceExport::ExportModel
               ['d', agent_dates],
               ['g', name['qualifier']],
             ]
+      
+      name_264 = name_parts
 
     when 'agent_family'
       code = '100'
@@ -195,10 +222,14 @@ class MARCModel < ASpaceExport::ExportModel
               ['d', agent_dates],
               ['g', name['qualifier']],
             ]
+      
+      name_264 = name['family_name']
+      
     end
 
     sfs << role_info
     df(code, ind1, ind2).with_sfs(*sfs)
+    df('264',"#", '0').with_sfs(['b', name_264])
   end
   
   def handle_agents(linked_agents)
@@ -306,6 +337,8 @@ class MARCModel < ASpaceExport::ExportModel
                   ['n', name['number']],
                   ['g', name['qualifier']],
                 ]
+          
+          name_264 = name['primary_name']
   
         when 'agent_person'
           joint, ind1 = name['name_order'] == 'direct' ? [' ', '0'] : [', ', '1']
@@ -320,6 +353,8 @@ class MARCModel < ASpaceExport::ExportModel
                   ['d', name['dates']],
                   ['g', name['qualifier']],
                 ]
+          
+          name_264 = name_parts
   
         when 'agent_family'
           ind1 = '3'
@@ -330,6 +365,9 @@ class MARCModel < ASpaceExport::ExportModel
                   ['d', name['dates']],
                   ['g', name['qualifier']],
                 ]
+          
+          name_264 = name['family_name']
+          
         end
       end
       
@@ -338,11 +376,11 @@ class MARCModel < ASpaceExport::ExportModel
         ind1 = '1'
         ind2 = ' '
         code = '561'
-        
+        ownership_language = 'Gift of '
+
         case creator['agent_type']
-        
+
           when 'agent_corporate_entity'
-            ownership_language = 'Gift of '
             sfs = [
                     ['a', ownership_language +  name['primary_name']],
                   ]    
@@ -360,6 +398,7 @@ class MARCModel < ASpaceExport::ExportModel
       end
       sfs << relator_sf
       df(code, ind1, ind2).with_sfs(*sfs)
+      df('264',"#", '0').with_sfs(['b', name_264])
     end
     
   end
@@ -470,13 +509,48 @@ class MARCModel < ASpaceExport::ExportModel
                                 )
   end
   
-  # add in the material type 245|b
-  def handle_title_extras(user_defined)
+  # add single dates to title
+  def handle_title(title, dates, id_0, finding_aid_description_rules, user_defined)
+    dates = [["single"]].map {|types|
+      dates.find {|date| types.include? date['date_type'] }
+    }.compact
+    
+    if dates.empty? || finding_aid_description_rules == 'dcrmmss' || finding_aid_description_rules == 'dcrmg'
+      df('245', '1', '0').with_sfs(['a', title])
+    else
+      dates.each do |date|
+        val = nil
+        if date['expression']
+          val = date['expression']
+        else
+          val = date['begin']
+          if id_0 =~/doh/i
+            val = Date.parse(date['begin']).strftime('%Y %B %-d')
+          end
+        end
+  
+        title_date = val.nil? ? '' : ', ' + val
+    
+        df('245', '1', '0').with_sfs(['a', title + title_date])
+      end
+    end
+    
+    # add in the material type 245|b
     if user_defined['text_4']
       df('245', '1', '0').with_sfs(['b', user_defined['text_4'].downcase])
     end
   end
   
+  def handle_title_extras(user_defined)
+
+  end
+  
+  # add the place of production to the 264|a
+  def handle_production_place(user_defined)
+    if user_defined['string_1']
+      df('264', '#', '0').with_sfs(['a', user_defined['string_1']])
+    end
+  end
 end
 
 
